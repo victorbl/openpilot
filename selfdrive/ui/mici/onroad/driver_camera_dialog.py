@@ -219,14 +219,6 @@ class BaseDriverCameraDialog(Widget):
       rl.draw_texture_v(self._eye_orange_texture, (eye_x, eye_y), rl.Color(255, 255, 255, int(255 * orange_opacity)))
       rl.draw_texture_v(self._eye_fill_texture, (eye_x, eye_y), rl.Color(255, 255, 255, int(255 * fill_opacity)))
 
-    # Draw sunglasses indicator based on sunglasses probability
-    # Position glasses centered between the two eyes at top left
-    glasses_x = rect.x + eye_offset_x - 4
-    glasses_y = rect.y
-    glasses_pos = rl.Vector2(glasses_x, glasses_y)
-    glasses_prob = driver_data.sunglassesProb
-    rl.draw_texture_v(self._glasses_texture, glasses_pos, rl.Color(70, 80, 161, int(255 * glasses_prob)))
-
 
 class DriverCameraDialog(NavWidget, BaseDriverCameraDialog):
   def __init__(self):
