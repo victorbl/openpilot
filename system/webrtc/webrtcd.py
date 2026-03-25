@@ -5,6 +5,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import time
 import os
 import ssl
 import subprocess
@@ -76,6 +77,41 @@ class CerealIncomingMessageProxy:
     msg = messaging.new_message(msg_type, size=size)
     setattr(msg, msg_type, msg_data)
     self.pm.send(msg_type, msg)
+
+
+class FrameMetadataBroadcaster:
+  def __init__(self, video_track, channel):
+    self.video_track = video_track
+    self.channel = channel
+    self.task = None
+    self._last_rtp_ts = None
+    self.logger = logging.getLogger("webrtcd")
+
+  def start(self):
+    assert self.task is None
+    self.task = asyncio.create_task(self.run())
+
+  def stop(self):
+    if self.task is None or self.task.done():
+      return
+    self.task.cancel()
+    self.task = None
+
+  async def run(self):
+    from aiortc.exceptions import InvalidStateError
+
+    while True:
+      try:
+        meta = self.video_track.get_last_frame_meta()
+        if meta is not None and meta["rtpTimestamp"] != self._last_rtp_ts:
+          self._last_rtp_ts = meta["rtpTimestamp"]
+          self.channel.send(json.dumps({"type": "frameTimestamp", "data": meta}))
+      except InvalidStateError:
+        self.logger.warning("Frame metadata broadcaster invalid state (connection closed)")
+        break
+      except Exception:
+        self.logger.exception("Frame metadata broadcaster failure")
+      await asyncio.sleep(0.01)
 
 
 class CerealProxyRunner:
@@ -202,6 +238,8 @@ class StreamSession:
       self.outgoing_bridge = CerealOutgoingMessageProxy(messaging.SubMaster(outgoing_services))
       self.outgoing_bridge_runner = CerealProxyRunner(self.outgoing_bridge)
 
+    self._messaging_channel = None
+    self.frame_metadata_broadcaster: FrameMetadataBroadcaster | None = None
     self.run_task: asyncio.Task | None = None
     self.cleaned_up = False
     self.logger.info(
@@ -244,9 +282,19 @@ class StreamSession:
   async def message_handler(self, message: bytes):
     try:
       payload = json.loads(message) if isinstance(message, (bytes, str)) else None
-      if isinstance(payload, dict) and payload.get("type") == "switchCamera":
-        self._handle_switch_camera(payload)
-        return
+      if isinstance(payload, dict):
+        if payload.get("type") == "switchCamera":
+          self._handle_switch_camera(payload)
+          return
+        if payload.get("type") == "clockSync" and isinstance(payload.get("data"), dict) and payload["data"].get("action") == "ping":
+          pong = {"type": "clockSync", "data": {
+            "action": "pong",
+            "browserSendTime": payload["data"]["browserSendTime"],
+            "deviceTime": time.time() * 1000,
+          }}
+          if self._messaging_channel is not None:
+            self._messaging_channel.send(json.dumps(pong))
+          return
       sound_name = parse_body_sound_request(message)
       if sound_name is not None:
         if self.audio_output is not None:
@@ -265,18 +313,21 @@ class StreamSession:
       if self.audio_output is not None and self.stream.has_incoming_audio_track():
         self.audio_output.start_track(self.stream.get_incoming_audio_track())
       if self.stream.has_messaging_channel():
+        self._messaging_channel = self.stream.get_messaging_channel()
         if self.incoming_bridge is not None or self.audio_output is not None:
           await self.shared_pub_master.add_services_if_needed(self.incoming_bridge_services)
           self.stream.set_message_handler(self.message_handler)
         if self.outgoing_bridge_runner is not None:
-          channel = self.stream.get_messaging_channel()
-          self.outgoing_bridge_runner.proxy.add_channel(channel)
+          self.outgoing_bridge_runner.proxy.add_channel(self._messaging_channel)
           self.outgoing_bridge_runner.start()
+        if hasattr(self.video_track, 'get_last_frame_meta'):
+          self.frame_metadata_broadcaster = FrameMetadataBroadcaster(self.video_track, self._messaging_channel)
+          self.frame_metadata_broadcaster.start()
       # Tell the client which camera is currently active
-      if self.stream.has_messaging_channel():
+      if self._messaging_channel is not None:
         try:
           active = getattr(self.video_track, '_camera_type', 'driver')
-          self.stream.get_messaging_channel().send(json.dumps({"type": "activeCamera", "data": {"camera": active}}))
+          self._messaging_channel.send(json.dumps({"type": "activeCamera", "data": {"camera": active}}))
         except Exception:
           pass
       self.logger.info("Stream session (%s) connected", self.identifier)
@@ -294,6 +345,8 @@ class StreamSession:
       return
     self.cleaned_up = True
     await self.stream.stop()
+    if self.frame_metadata_broadcaster is not None:
+      self.frame_metadata_broadcaster.stop()
     if self.outgoing_bridge is not None:
       self.outgoing_bridge_runner.stop()
     if self.outgoing_audio_track is not None:

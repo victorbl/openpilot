@@ -22,6 +22,7 @@ class LiveStreamVideoStreamTrack(TiciVideoStreamTrack):
     self._sock = messaging.sub_sock(self.camera_to_sock_mapping[camera_type], conflate=True)
     self._pts = 0
     self._t0_ns = time.monotonic_ns()
+    self._last_frame_meta: dict | None = None
 
   def switch_camera(self, camera_type: str):
     if camera_type not in self.camera_to_sock_mapping or camera_type == self._camera_type:
@@ -45,7 +46,17 @@ class LiveStreamVideoStreamTrack(TiciVideoStreamTrack):
     packet.pts = self._pts
     self.log_debug("track sending frame %d", self._pts)
 
+    self._last_frame_meta = {
+      "rtpTimestamp": self._pts,
+      "captureMs": (evta.idx.timestampEof - evta.idx.timestampSof) / 1e6,
+      "encodeMs": (msg.logMonoTime - evta.idx.timestampEof) / 1e6,
+      "deviceSendTimeMs": time.time() * 1000,
+    }
+
     return packet
+
+  def get_last_frame_meta(self) -> dict | None:
+    return self._last_frame_meta
 
   def codec_preference(self) -> str | None:
     return "H264"
