@@ -33,6 +33,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
+REPLAY = bool(int(os.getenv('REPLAY', '0')))
 
 VISION_PKL_PATH = Path(__file__).parent / 'models/driving_vision_tinygrad.pkl'
 POLICY_PKL_PATH = Path(__file__).parent / 'models/driving_policy_tinygrad.pkl'
@@ -388,7 +389,7 @@ def main(demo=False):
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
 
-      frame_delay = (modelv2_send.logMonoTime -  meta_main.timestamp_eof) * 1e-9
+      frame_delay = DT_MDL if REPLAY else (modelv2_send.logMonoTime -  meta_main.timestamp_eof) * 1e-9
       action = get_action_from_model(model_output, prev_action, lat_delay + frame_delay + DT_MDL, long_delay + DT_MDL, v_ego)
       prev_action = action
       fill_model_msg(drivingdata_send, modelv2_send, model_output, action,
