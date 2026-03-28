@@ -1091,7 +1091,7 @@ struct ModelDataV2 {
   confidence @23: ConfidenceClass;
 
   # Model perceived motion
-  temporalPoseDEPRECATED @21 :Pose;
+  temporalPose @21 :Pose;
 
   # e2e lateral planner
   action @26: Action;
@@ -2182,9 +2182,9 @@ struct DriverStateV2 {
     rightBlinkProb @8 :Float32;
     sunglassesProb @9 :Float32;
     phoneProb @13 :Float32;
-    notReadyProbDEPRECATED @12 :List(Float32);
+    notReadyProb @12 :List(Float32);
     occludedProbDEPRECATED @10 :Float32;
-    readyProbDEPRECATED @11 :List(Float32);
+    readyProb @11 :List(Float32);
   }
 
   dspExecutionTimeDEPRECATED @2 :Float32;

@@ -101,7 +101,7 @@ def test_process(cfg, lr, segment, ref_log_msgs, new_log_path, ignore_fields=Non
   try:
     log_msgs = replay_process(cfg, lr, disable_progress=True)
   except Exception as e:
-    raise Exception("failed on segment: " + segment) from e
+    return f"replay crashed on segment {segment}: {e}", []
 
   if not check_most_messages_valid(log_msgs):
     return f"Route did not have enough valid messages: {new_log_path}", log_msgs
