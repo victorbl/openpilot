@@ -222,6 +222,14 @@ env_swaglog = env.Clone()
 env_swaglog['CXXFLAGS'].append('-DSWAGLOG="\\"common/swaglog.h\\""')
 SConscript(['msgq_repo/SConscript'], exports={'env': env_swaglog})
 
+Import('visionipc')
+if arch == "Darwin":
+  # OpenCL is a framework on Mac, handled per-target
+  pass
+else:
+  visionipc = [visionipc, 'OpenCL']
+Export('visionipc')
+
 SConscript(['cereal/SConscript'])
 
 Import('socketmaster', 'msgq')
