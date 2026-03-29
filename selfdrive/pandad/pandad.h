@@ -1,11 +1,19 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "common/params.h"
 #include "selfdrive/pandad/panda.h"
 
 void pandad_main_thread(std::string serial);
+
+// supported internal panda types (comma 3x=TRES, comma four=CUATRO)
+static const std::vector<cereal::PandaState::PandaType> SUPPORTED_PANDA_TYPES = {
+  cereal::PandaState::PandaType::RED_PANDA,
+  cereal::PandaState::PandaType::TRES,
+  cereal::PandaState::PandaType::CUATRO,
+};
 
 class PandaSafety {
 public:

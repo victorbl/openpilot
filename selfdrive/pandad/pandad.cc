@@ -1,5 +1,6 @@
 #include "selfdrive/pandad/pandad.h"
 
+#include <algorithm>
 #include <array>
 #include <bitset>
 #include <cassert>
@@ -47,6 +48,13 @@ Panda *connect(std::string serial) {
 
   for (int i = 0; i < PANDA_CAN_CNT; i++) {
     panda->set_can_fd_auto(i, true);
+  }
+
+  bool is_supported_panda = std::find(SUPPORTED_PANDA_TYPES.begin(), SUPPORTED_PANDA_TYPES.end(), panda->hw_type) != SUPPORTED_PANDA_TYPES.end();
+
+  if (!is_supported_panda) {
+    LOGW("panda %s is not supported (hw_type: %i), skipping firmware check...", panda->hw_serial().c_str(), static_cast<uint16_t>(panda->hw_type));
+    return panda.release();
   }
 
   if (!panda->up_to_date() && !getenv("BOARDD_SKIP_FW_CHECK")) {

@@ -29,6 +29,11 @@ def flash_panda(panda_serial: str) -> Panda:
     HARDWARE.recover_internal_panda()
     raise
 
+  # skip flashing if the detected panda is not supported (e.g. xnor's external Black Panda)
+  if panda.get_type() not in Panda.SUPPORTED_DEVICES:
+    cloudlog.warning(f"Panda {panda_serial} is not supported (hw_type: {panda.get_type()}), skipping flash...")
+    return panda
+
   fw_signature = get_expected_signature()
   internal_panda = panda.is_internal()
 
@@ -59,6 +64,23 @@ def flash_panda(panda_serial: str) -> Panda:
     raise AssertionError
 
   return panda
+
+
+def check_panda_support(panda_serials: list[str]) -> list[str]:
+  """Filter to only the internal (SPI) panda, skipping external devices like xnor's Black Panda."""
+  spi_serials = set(Panda.spi_list())
+  for serial in panda_serials:
+    if serial in spi_serials:
+      return [serial]
+
+  for serial in panda_serials:
+    panda = Panda(serial)
+    is_internal = panda.is_internal()
+    panda.close()
+    if is_internal:
+      return [serial]
+
+  return []
 
 
 def main() -> None:
@@ -109,6 +131,11 @@ def main() -> None:
         continue
 
       cloudlog.info(f"{len(panda_serials)} panda(s) found, connecting - {panda_serials}")
+
+      # find the internal supported panda (e.g. skip external Black Panda from xnor harness)
+      panda_serials = check_panda_support(panda_serials)
+      if len(panda_serials) == 0:
+        continue
 
       # Flash the first panda
       panda_serial = panda_serials[0]
