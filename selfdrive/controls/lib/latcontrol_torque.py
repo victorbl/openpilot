@@ -6,8 +6,23 @@ from cereal import log
 from opendbc.car.lateral import FRICTION_THRESHOLD, get_friction
 from openpilot.common.constants import ACCELERATION_DUE_TO_GRAVITY
 from openpilot.common.filter_simple import FirstOrderFilter
+from openpilot.common.params import Params
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.common.pid import PIDController
+
+LAT_AGGR_KEYS = {
+  log.LongitudinalPersonality.aggressive: "LatAggrAggressive",
+  log.LongitudinalPersonality.standard: "LatAggrStandard",
+  log.LongitudinalPersonality.relaxed: "LatAggrRelaxed",
+}
+
+def lat_aggr_to_multiplier(scale: int) -> float:
+  """Convert 1-10 scale to multiplier. 5 = 1.0x (stock). Piecewise: 1→0.5, 5→1.0, 10→1.5."""
+  scale = int(np.clip(scale, 1, 10))
+  if scale <= 5:
+    return 0.5 + (scale - 1) * 0.125
+  else:
+    return 1.0 + (scale - 5) * 0.1
 
 # At higher speeds (25+mph) we can assume:
 # Lateral acceleration achieved by a specific car correlates to
@@ -41,10 +56,31 @@ class LatControlTorque(LatControl):
     self.pid = PIDController([INTERP_SPEEDS, KP_INTERP], KI, rate=1/self.dt)
     self.update_limits()
     self.steering_angle_deadzone_deg = self.torque_params.steeringAngleDeadzoneDeg
+
+    # Steering response tuning
+    self._tuning_params = Params()
+    self._steering_multiplier = 1.0
+    self._cached_personality = None
+    self._tuning_frame_counter = 0
     self.lat_accel_request_buffer_len = int(LAT_ACCEL_REQUEST_BUFFER_SECONDS / self.dt)
     self.lat_accel_request_buffer = deque([0.] * self.lat_accel_request_buffer_len , maxlen=self.lat_accel_request_buffer_len)
     self.lookahead_frames = int(JERK_LOOKAHEAD_SECONDS / self.dt)
     self.jerk_filter = FirstOrderFilter(0.0, 1 / (2 * np.pi * LP_FILTER_CUTOFF_HZ), self.dt)
+
+  def set_personality(self, personality):
+    """Update steering response multiplier from tuning params. Re-reads every ~1 second."""
+    self._tuning_frame_counter += 1
+    if personality != self._cached_personality or self._tuning_frame_counter >= 100:
+      self._tuning_frame_counter = 0
+      self._cached_personality = personality
+      key = LAT_AGGR_KEYS.get(personality)
+      if key:
+        try:
+          raw = self._tuning_params.get(key, return_default=True)
+          scale = int(np.clip(int(raw), 1, 10))
+          self._steering_multiplier = lat_aggr_to_multiplier(scale)
+        except (ValueError, TypeError):
+          self._steering_multiplier = 1.0
 
   def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction):
     self.torque_params.latAccelFactor = latAccelFactor
@@ -91,6 +127,7 @@ class LatControlTorque(LatControl):
 
       freeze_integrator = steer_limited_by_safety or CS.steeringPressed or CS.vEgo < 5
       output_lataccel = self.pid.update(pid_log.error, speed=CS.vEgo, feedforward=ff, freeze_integrator=freeze_integrator)
+      output_lataccel *= self._steering_multiplier
       output_torque = self.torque_from_lateral_accel(output_lataccel, self.torque_params)
 
       pid_log.active = True

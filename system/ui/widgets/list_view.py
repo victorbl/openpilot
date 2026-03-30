@@ -206,6 +206,82 @@ class DualButtonAction(ItemAction):
     self.right_button.render(right_rect)
 
 
+class OptionAction(ItemAction):
+  """Numeric stepper: [-] value [+] for adjusting values with increment/decrement buttons."""
+  STEPPER_BTN_SIZE = 80
+  STEPPER_SPACING = 15
+  VALUE_WIDTH = 120
+
+  def __init__(self, value: float, min_val: float, max_val: float, step: float,
+               format_fn: Callable[[float], str], callback: Callable[[float], None] | None = None,
+               enabled: bool | Callable[[], bool] = True):
+    total_width = self.STEPPER_BTN_SIZE * 2 + self.VALUE_WIDTH + self.STEPPER_SPACING * 2
+    super().__init__(width=total_width, enabled=enabled)
+    self._value = value
+    self._min = min_val
+    self._max = max_val
+    self._step = step
+    self._format = format_fn
+    self._callback = callback
+    self._font = gui_app.font(FontWeight.MEDIUM)
+    self._minus_btn = Button("-", font_size=BUTTON_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
+                             button_style=ButtonStyle.LIST_ACTION, border_radius=BUTTON_BORDER_RADIUS,
+                             click_callback=self._decrement, text_padding=0)
+    self._plus_btn = Button("+", font_size=BUTTON_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
+                            button_style=ButtonStyle.LIST_ACTION, border_radius=BUTTON_BORDER_RADIUS,
+                            click_callback=self._increment, text_padding=0)
+
+  def set_touch_valid_callback(self, touch_callback: Callable[[], bool]) -> None:
+    super().set_touch_valid_callback(touch_callback)
+    self._minus_btn.set_touch_valid_callback(touch_callback)
+    self._plus_btn.set_touch_valid_callback(touch_callback)
+
+  def get_value(self) -> float:
+    return self._value
+
+  def set_value(self, value: float):
+    self._value = round(max(self._min, min(self._max, value)), 2)
+
+  def _decrement(self):
+    if self._value > self._min:
+      self._value = round(max(self._min, self._value - self._step), 2)
+      if self._callback:
+        self._callback(self._value)
+
+  def _increment(self):
+    if self._value < self._max:
+      self._value = round(min(self._max, self._value + self._step), 2)
+      if self._callback:
+        self._callback(self._value)
+
+  def _render(self, rect: rl.Rectangle) -> bool:
+    btn_size = self.STEPPER_BTN_SIZE
+    spacing = self.STEPPER_SPACING
+    val_width = self.VALUE_WIDTH
+    y = rect.y + (rect.height - BUTTON_HEIGHT) / 2
+
+    # [-] button
+    minus_rect = rl.Rectangle(rect.x, y, btn_size, BUTTON_HEIGHT)
+    self._minus_btn.set_enabled(self.enabled and self._value > self._min)
+    self._minus_btn.render(minus_rect)
+
+    # Value display
+    val_x = rect.x + btn_size + spacing
+    val_text = self._format(self._value)
+    text_size = measure_text_cached(self._font, val_text, 40)
+    text_x = val_x + (val_width - text_size.x) / 2
+    text_y = y + (BUTTON_HEIGHT - text_size.y) / 2
+    text_color = rl.Color(228, 228, 228, 255) if self.enabled else rl.Color(150, 150, 150, 255)
+    rl.draw_text_ex(self._font, val_text, rl.Vector2(text_x, text_y), 40, 0, text_color)
+
+    # [+] button
+    plus_rect = rl.Rectangle(val_x + val_width + spacing, y, btn_size, BUTTON_HEIGHT)
+    self._plus_btn.set_enabled(self.enabled and self._value < self._max)
+    self._plus_btn.render(plus_rect)
+
+    return False
+
+
 class MultipleButtonAction(ItemAction):
   def __init__(self, buttons: list[str | Callable[[], str]], button_width: int, selected_index: int = 0, callback: Callable | None = None):
     super().__init__(width=len(buttons) * button_width + (len(buttons) - 1) * RIGHT_ITEM_PADDING, enabled=True)
@@ -466,3 +542,11 @@ def multiple_button_item(title: str | Callable[[], str], description: str | Call
                          button_width: int = BUTTON_WIDTH, callback: Callable | None = None, icon: str = ""):
   action = MultipleButtonAction(buttons, button_width, selected_index, callback=callback)
   return ListItem(title=title, description=description, icon=icon, action_item=action)
+
+
+def option_item(title: str | Callable[[], str], value: float, min_val: float, max_val: float, step: float,
+                format_fn: Callable[[float], str], callback: Callable[[float], None] | None = None,
+                description: str | Callable[[], str] | None = None, enabled: bool | Callable[[], bool] = True) -> ListItem:
+  action = OptionAction(value=value, min_val=min_val, max_val=max_val, step=step,
+                        format_fn=format_fn, callback=callback, enabled=enabled)
+  return ListItem(title=title, description=description, action_item=action)

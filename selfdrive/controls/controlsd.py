@@ -84,6 +84,7 @@ class Controls:
       if self.sm.all_checks(['liveTorqueParameters']) and torque_params.useParams:
         self.LaC.update_live_torque_params(torque_params.latAccelFactorFiltered, torque_params.latAccelOffsetFiltered,
                                            torque_params.frictionCoefficientFiltered)
+      self.LaC.set_personality(self.sm['selfdriveState'].personality)
 
     long_plan = self.sm['longitudinalPlan']
     model_v2 = self.sm['modelV2']

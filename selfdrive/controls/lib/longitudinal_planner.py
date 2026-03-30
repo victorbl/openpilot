@@ -3,8 +3,10 @@ import math
 import numpy as np
 
 import cereal.messaging as messaging
+from cereal import log
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
 from openpilot.common.constants import CV
+from openpilot.common.params import Params
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
@@ -45,6 +47,17 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   return [a_target[0], min(a_target[1], a_x_allowed)]
 
 
+TUNING_PARAM_KEYS = {
+  log.LongitudinalPersonality.aggressive: {"follow": "TFollowAggressive", "accel": "AccelRespAggressive"},
+  log.LongitudinalPersonality.standard: {"follow": "TFollowStandard", "accel": "AccelRespStandard"},
+  log.LongitudinalPersonality.relaxed: {"follow": "TFollowRelaxed", "accel": "AccelRespRelaxed"},
+}
+
+def accel_resp_to_jerk_factor(scale: int) -> float:
+  """Convert 1-10 scale to jerk_factor. 5 = 1.0 (stock standard), 8 = 0.5 (stock aggressive)."""
+  return max(0.1, 1.0 - (scale - 5) * (1.0 / 6.0))
+
+
 class LongitudinalPlanner:
   def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
@@ -62,6 +75,33 @@ class LongitudinalPlanner:
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
+
+    # Tuning param cache
+    self._params = Params()
+    self._cached_personality = None
+    self._cached_t_follow = None
+    self._cached_jerk_factor = None
+    self._tuning_read_counter = 0
+
+  def _refresh_tuning_params(self, personality):
+    """Re-read tuning params on personality change or every ~1 second (20 cycles at 20Hz)."""
+    self._tuning_read_counter += 1
+    if personality != self._cached_personality or self._tuning_read_counter >= 20:
+      self._tuning_read_counter = 0
+      self._cached_personality = personality
+      keys = TUNING_PARAM_KEYS.get(personality)
+      if keys:
+        try:
+          raw_follow = self._params.get(keys["follow"], return_default=True)
+          self._cached_t_follow = float(np.clip(float(raw_follow), 0.8, 2.0))
+        except (ValueError, TypeError):
+          self._cached_t_follow = None
+        try:
+          raw_accel = self._params.get(keys["accel"], return_default=True)
+          accel_scale = int(np.clip(int(raw_accel), 1, 10))
+          self._cached_jerk_factor = accel_resp_to_jerk_factor(accel_scale)
+        except (ValueError, TypeError):
+          self._cached_jerk_factor = None
 
   @staticmethod
   def parse_model(model_msg):
@@ -128,9 +168,11 @@ class LongitudinalPlanner:
     if force_slow_decel:
       v_cruise = 0.0
 
-    self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality)
+    personality = sm['selfdriveState'].personality
+    self._refresh_tuning_params(personality)
+    self.mpc.set_weights(prev_accel_constraint, personality=personality, jerk_factor_override=self._cached_jerk_factor)
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
-    self.mpc.update(sm['radarState'], v_cruise, personality=sm['selfdriveState'].personality)
+    self.mpc.update(sm['radarState'], v_cruise, personality=personality, t_follow_override=self._cached_t_follow)
 
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
     self.a_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
