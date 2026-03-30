@@ -1,7 +1,7 @@
 from openpilot.common.params import Params
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.lib.application import FontWeight
-from openpilot.system.ui.widgets.list_view import simple_item, option_item
+from openpilot.system.ui.widgets.list_view import simple_item, option_item, button_item
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 from openpilot.system.ui.lib.multilang import tr
 
@@ -41,6 +41,7 @@ class TuningLayout(Widget):
     super().__init__()
     self._params = Params()
     self._items = []
+    self._option_controls = []  # track for reset
 
     for config in PERSONALITY_CONFIGS:
       defaults = config["defaults"]
@@ -61,6 +62,7 @@ class TuningLayout(Widget):
         indent=40,
       )
       self._items.append(follow_item)
+      self._option_controls.append((follow_item, param_keys["follow"], defaults["follow"], "float"))
 
       # Steering Response
       steer_val = self._read_int(param_keys["steer"], defaults["steer"])
@@ -73,6 +75,7 @@ class TuningLayout(Widget):
         indent=40,
       )
       self._items.append(steer_item)
+      self._option_controls.append((steer_item, param_keys["steer"], defaults["steer"], "int"))
 
       # Acceleration Response
       accel_val = self._read_int(param_keys["accel"], defaults["accel"])
@@ -85,6 +88,14 @@ class TuningLayout(Widget):
         indent=40,
       )
       self._items.append(accel_item)
+      self._option_controls.append((accel_item, param_keys["accel"], defaults["accel"], "int"))
+
+    # Reset button
+    self._items.append(button_item(
+      lambda: tr("Reset to Defaults"),
+      lambda: tr("RESET"),
+      callback=self._reset_to_defaults,
+    ))
 
     self._scroller = Scroller(self._items, line_separator=True, spacing=0)
 
@@ -111,6 +122,14 @@ class TuningLayout(Widget):
     def callback(value: float):
       self._params.put_nonblocking(key, int(value))
     return callback
+
+  def _reset_to_defaults(self):
+    for item, key, default, typ in self._option_controls:
+      if typ == "float":
+        self._params.put_nonblocking(key, float(default))
+      else:
+        self._params.put_nonblocking(key, int(default))
+      item.action_item.set_value(float(default))
 
   def _render(self, rect):
     self._scroller.render(rect)
