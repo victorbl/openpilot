@@ -1,5 +1,6 @@
 from openpilot.common.params import Params
 from openpilot.system.ui.widgets import Widget
+from openpilot.system.ui.lib.application import FontWeight
 from openpilot.system.ui.widgets.list_view import simple_item, option_item
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 from openpilot.system.ui.lib.multilang import tr
@@ -46,7 +47,7 @@ class TuningLayout(Widget):
       param_keys = config["params"]
 
       # Section header
-      header = simple_item(lambda name=config["name"]: f"── {name} ──")
+      header = simple_item(lambda name=config["name"]: name, font_weight=FontWeight.BOLD)
       self._items.append(header)
 
       # Follow Distance
@@ -57,6 +58,7 @@ class TuningLayout(Widget):
         format_fn=lambda v: f"{v:.2f}s",
         callback=self._make_float_callback(param_keys["follow"]),
         description=lambda: tr("Time gap behind the lead car. Lower = closer following, higher = more space."),
+        indent=40,
       )
       self._items.append(follow_item)
 
@@ -68,6 +70,7 @@ class TuningLayout(Widget):
         format_fn=lambda v: str(int(v)),
         callback=self._make_int_callback(param_keys["steer"]),
         description=lambda: tr("How firmly the car holds its line in curves. Lower = gentle corrections, higher = tighter tracking."),
+        indent=40,
       )
       self._items.append(steer_item)
 
@@ -79,6 +82,7 @@ class TuningLayout(Widget):
         format_fn=lambda v: str(int(v)),
         callback=self._make_int_callback(param_keys["accel"]),
         description=lambda: tr("How sharply the car accelerates and brakes. Lower = smooth transitions, higher = snappier response."),
+        indent=40,
       )
       self._items.append(accel_item)
 

@@ -223,11 +223,11 @@ class OptionAction(ItemAction):
     self._step = step
     self._format = format_fn
     self._callback = callback
-    self._font = gui_app.font(FontWeight.MEDIUM)
-    self._minus_btn = Button("-", font_size=BUTTON_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
+    self._font = gui_app.font(FontWeight.NORMAL)
+    self._minus_btn = Button("-", font_size=ITEM_TEXT_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
                              button_style=ButtonStyle.LIST_ACTION, border_radius=BUTTON_BORDER_RADIUS,
                              click_callback=self._decrement, text_padding=0)
-    self._plus_btn = Button("+", font_size=BUTTON_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
+    self._plus_btn = Button("+", font_size=ITEM_TEXT_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
                             button_style=ButtonStyle.LIST_ACTION, border_radius=BUTTON_BORDER_RADIUS,
                             click_callback=self._increment, text_padding=0)
 
@@ -268,11 +268,11 @@ class OptionAction(ItemAction):
     # Value display
     val_x = rect.x + btn_size + spacing
     val_text = self._format(self._value)
-    text_size = measure_text_cached(self._font, val_text, 40)
+    text_size = measure_text_cached(self._font, val_text, ITEM_TEXT_FONT_SIZE)
     text_x = val_x + (val_width - text_size.x) / 2
     text_y = y + (BUTTON_HEIGHT - text_size.y) / 2
     text_color = rl.Color(228, 228, 228, 255) if self.enabled else rl.Color(150, 150, 150, 255)
-    rl.draw_text_ex(self._font, val_text, rl.Vector2(text_x, text_y), 40, 0, text_color)
+    rl.draw_text_ex(self._font, val_text, rl.Vector2(text_x, text_y), ITEM_TEXT_FONT_SIZE, 0, text_color)
 
     # [+] button
     plus_rect = rl.Rectangle(val_x + val_width + spacing, y, btn_size, BUTTON_HEIGHT)
@@ -348,7 +348,7 @@ class MultipleButtonAction(ItemAction):
 class ListItem(Widget):
   def __init__(self, title: str | Callable[[], str] = "", icon: str | None = None, description: str | Callable[[], str] | None = None,
                description_visible: bool = False, callback: Callable | None = None,
-               action_item: ItemAction | None = None):
+               action_item: ItemAction | None = None, indent: int = 0):
     super().__init__()
     self._title = title
     self.set_icon(icon)
@@ -357,6 +357,7 @@ class ListItem(Widget):
     self.callback = callback
     self.description_opened_callback: Callable | None = None
     self.action_item = action_item
+    self._indent = indent
 
     self.set_rect(rl.Rectangle(0, 0, ITEM_BASE_WIDTH, ITEM_BASE_HEIGHT))
     self._font = gui_app.font(FontWeight.NORMAL)
@@ -425,7 +426,7 @@ class ListItem(Widget):
       return
 
     content_x = self._rect.x + ITEM_PADDING
-    text_x = content_x
+    text_x = content_x + self._indent
 
     # Only draw title and icon for items that have them
     if self.title:
@@ -500,7 +501,7 @@ class ListItem(Widget):
 
     # Clip width to available space, never overlapping this Item's title
     content_width = item_rect.width - (ITEM_PADDING * 2)
-    title_width = measure_text_cached(self._font, self.title, ITEM_TEXT_FONT_SIZE).x
+    title_width = measure_text_cached(self._font, self.title, ITEM_TEXT_FONT_SIZE).x + self._indent
     right_width = min(content_width - title_width, right_width)
 
     right_x = item_rect.x + item_rect.width - right_width
@@ -509,8 +510,10 @@ class ListItem(Widget):
 
 
 # Factory functions
-def simple_item(title: str | Callable[[], str], callback: Callable | None = None) -> ListItem:
-  return ListItem(title=title, callback=callback)
+def simple_item(title: str | Callable[[], str], callback: Callable | None = None, font_weight: FontWeight = FontWeight.NORMAL) -> ListItem:
+  item = ListItem(title=title, callback=callback)
+  item._font = gui_app.font(font_weight)
+  return item
 
 
 def toggle_item(title: str | Callable[[], str], description: str | Callable[[], str] | None = None, initial_state: bool = False,
@@ -546,7 +549,8 @@ def multiple_button_item(title: str | Callable[[], str], description: str | Call
 
 def option_item(title: str | Callable[[], str], value: float, min_val: float, max_val: float, step: float,
                 format_fn: Callable[[float], str], callback: Callable[[float], None] | None = None,
-                description: str | Callable[[], str] | None = None, enabled: bool | Callable[[], bool] = True) -> ListItem:
+                description: str | Callable[[], str] | None = None, enabled: bool | Callable[[], bool] = True,
+                indent: int = 0) -> ListItem:
   action = OptionAction(value=value, min_val=min_val, max_val=max_val, step=step,
                         format_fn=format_fn, callback=callback, enabled=enabled)
-  return ListItem(title=title, description=description, action_item=action)
+  return ListItem(title=title, description=description, action_item=action, indent=indent)
