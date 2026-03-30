@@ -209,7 +209,8 @@ class DualButtonAction(ItemAction):
 class OptionAction(ItemAction):
   """Numeric stepper: [-] value [+] for adjusting values with increment/decrement buttons."""
   STEPPER_BTN_SIZE = 80
-  STEPPER_SPACING = 25
+  STEPPER_SPACING = 40
+  STEPPER_BTN_FONT_SIZE = 60
   VALUE_WIDTH = 120
 
   def __init__(self, value: float, min_val: float, max_val: float, step: float,
@@ -224,10 +225,10 @@ class OptionAction(ItemAction):
     self._format = format_fn
     self._callback = callback
     self._font = gui_app.font(FontWeight.NORMAL)
-    self._minus_btn = Button("-", font_size=ITEM_TEXT_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
+    self._minus_btn = Button("-", font_size=self.STEPPER_BTN_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
                              button_style=ButtonStyle.LIST_ACTION, border_radius=BUTTON_BORDER_RADIUS,
                              click_callback=self._decrement, text_padding=0)
-    self._plus_btn = Button("+", font_size=ITEM_TEXT_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
+    self._plus_btn = Button("+", font_size=self.STEPPER_BTN_FONT_SIZE, font_weight=BUTTON_FONT_WEIGHT,
                             button_style=ButtonStyle.LIST_ACTION, border_radius=BUTTON_BORDER_RADIUS,
                             click_callback=self._increment, text_padding=0)
 
