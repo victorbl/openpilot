@@ -19,7 +19,7 @@ from openpilot.system.ui.widgets.network import NetworkUI
 SIDEBAR_WIDTH = 500
 CLOSE_BTN_SIZE = 200
 CLOSE_ICON_SIZE = 70
-NAV_BTN_HEIGHT = 90
+NAV_BTN_HEIGHT = 100
 PANEL_MARGIN = 50
 
 # Colors
