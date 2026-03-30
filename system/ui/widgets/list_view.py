@@ -209,7 +209,7 @@ class DualButtonAction(ItemAction):
 class OptionAction(ItemAction):
   """Numeric stepper: [-] value [+] for adjusting values with increment/decrement buttons."""
   STEPPER_BTN_SIZE = 80
-  STEPPER_SPACING = 15
+  STEPPER_SPACING = 25
   VALUE_WIDTH = 120
 
   def __init__(self, value: float, min_val: float, max_val: float, step: float,
