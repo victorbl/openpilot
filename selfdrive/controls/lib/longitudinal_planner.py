@@ -53,6 +53,10 @@ TUNING_PARAM_KEYS = {
   log.LongitudinalPersonality.relaxed: {"follow": "TFollowRelaxed", "accel": "AccelRespRelaxed"},
 }
 
+def follow_scale_to_t_follow(scale: int) -> float:
+  """Convert 1-10 scale to t_follow seconds. 1 = 0.41s (~4 car lengths at 65mph), 10 ≈ 1.75s (stock relaxed)."""
+  return 0.41 + (scale - 1) * 0.149
+
 def accel_resp_to_jerk_factor(scale: int) -> float:
   """Convert 1-10 scale to jerk_factor. 5 = 1.0 (stock standard), 8 = 0.5 (stock aggressive)."""
   return max(0.1, 1.0 - (scale - 5) * (1.0 / 6.0))
@@ -93,7 +97,8 @@ class LongitudinalPlanner:
       if keys:
         try:
           raw_follow = self._params.get(keys["follow"], return_default=True)
-          self._cached_t_follow = float(np.clip(float(raw_follow), 0.8, 2.0))
+          follow_scale = int(np.clip(int(raw_follow), 1, 10))
+          self._cached_t_follow = follow_scale_to_t_follow(follow_scale)
         except (ValueError, TypeError):
           self._cached_t_follow = None
         try:

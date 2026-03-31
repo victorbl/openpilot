@@ -132,9 +132,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"Version", {PERSISTENT, STRING}},
 
     // Rivian Tuning Panel params
-    {"TFollowAggressive", {PERSISTENT, FLOAT, "1.25"}},
-    {"TFollowStandard", {PERSISTENT, FLOAT, "1.45"}},
-    {"TFollowRelaxed", {PERSISTENT, FLOAT, "1.75"}},
+    {"TFollowAggressive", {PERSISTENT, INT, "7"}},
+    {"TFollowStandard", {PERSISTENT, INT, "8"}},
+    {"TFollowRelaxed", {PERSISTENT, INT, "10"}},
     {"LatAggrAggressive", {PERSISTENT, INT, "5"}},
     {"LatAggrStandard", {PERSISTENT, INT, "5"}},
     {"LatAggrRelaxed", {PERSISTENT, INT, "5"}},

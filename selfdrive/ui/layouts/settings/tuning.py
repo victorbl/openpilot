@@ -13,7 +13,7 @@ PERSONALITY_CONFIGS = [
       "steer": "LatAggrAggressive",
       "accel": "AccelRespAggressive",
     },
-    "defaults": {"follow": 1.25, "steer": 5, "accel": 8},
+    "defaults": {"follow": 7, "steer": 5, "accel": 8},
   },
   {
     "name": "Standard",
@@ -22,7 +22,7 @@ PERSONALITY_CONFIGS = [
       "steer": "LatAggrStandard",
       "accel": "AccelRespStandard",
     },
-    "defaults": {"follow": 1.45, "steer": 5, "accel": 5},
+    "defaults": {"follow": 8, "steer": 5, "accel": 5},
   },
   {
     "name": "Relaxed",
@@ -31,7 +31,7 @@ PERSONALITY_CONFIGS = [
       "steer": "LatAggrRelaxed",
       "accel": "AccelRespRelaxed",
     },
-    "defaults": {"follow": 1.75, "steer": 5, "accel": 5},
+    "defaults": {"follow": 10, "steer": 5, "accel": 5},
   },
 ]
 
@@ -52,17 +52,17 @@ class TuningLayout(Widget):
       self._items.append(header)
 
       # Follow Distance
-      follow_val = self._read_float(param_keys["follow"], defaults["follow"])
+      follow_val = self._read_int(param_keys["follow"], defaults["follow"])
       follow_item = option_item(
         title=lambda: tr("Follow Distance"),
-        value=follow_val, min_val=0.8, max_val=2.0, step=0.05,
-        format_fn=lambda v: f"{v:.2f}s",
-        callback=self._make_float_callback(param_keys["follow"]),
-        description=lambda: tr("Time gap behind the lead car. Lower = closer following, higher = more space."),
+        value=float(follow_val), min_val=1, max_val=10, step=1,
+        format_fn=lambda v: str(int(v)),
+        callback=self._make_int_callback(param_keys["follow"]),
+        description=lambda: tr("Gap to the car ahead. ~4 car lengths (closest) to ~12 car lengths (farthest) at highway speed."),
         indent=40,
       )
       self._items.append(follow_item)
-      self._option_controls.append((follow_item, param_keys["follow"], defaults["follow"], "float"))
+      self._option_controls.append((follow_item, param_keys["follow"], defaults["follow"]))
 
       # Steering Response
       steer_val = self._read_int(param_keys["steer"], defaults["steer"])
@@ -75,7 +75,7 @@ class TuningLayout(Widget):
         indent=40,
       )
       self._items.append(steer_item)
-      self._option_controls.append((steer_item, param_keys["steer"], defaults["steer"], "int"))
+      self._option_controls.append((steer_item, param_keys["steer"], defaults["steer"]))
 
       # Acceleration Response
       accel_val = self._read_int(param_keys["accel"], defaults["accel"])
@@ -88,7 +88,7 @@ class TuningLayout(Widget):
         indent=40,
       )
       self._items.append(accel_item)
-      self._option_controls.append((accel_item, param_keys["accel"], defaults["accel"], "int"))
+      self._option_controls.append((accel_item, param_keys["accel"], defaults["accel"]))
 
     # Reset button
     self._items.append(button_item(
@@ -99,13 +99,6 @@ class TuningLayout(Widget):
 
     self._scroller = Scroller(self._items, line_separator=True, spacing=0)
 
-  def _read_float(self, key: str, default: float) -> float:
-    try:
-      val = self._params.get(key, return_default=True)
-      return float(val) if val is not None else default
-    except (ValueError, TypeError):
-      return default
-
   def _read_int(self, key: str, default: int) -> int:
     try:
       val = self._params.get(key, return_default=True)
@@ -113,22 +106,14 @@ class TuningLayout(Widget):
     except (ValueError, TypeError):
       return default
 
-  def _make_float_callback(self, key: str):
-    def callback(value: float):
-      self._params.put_nonblocking(key, value)
-    return callback
-
   def _make_int_callback(self, key: str):
     def callback(value: float):
       self._params.put_nonblocking(key, int(value))
     return callback
 
   def _reset_to_defaults(self):
-    for item, key, default, typ in self._option_controls:
-      if typ == "float":
-        self._params.put_nonblocking(key, float(default))
-      else:
-        self._params.put_nonblocking(key, int(default))
+    for item, key, default in self._option_controls:
+      self._params.put_nonblocking(key, int(default))
       item.action_item.set_value(float(default))
 
   def _render(self, rect):
