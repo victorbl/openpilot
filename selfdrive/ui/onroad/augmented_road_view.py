@@ -8,6 +8,7 @@ from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.selfdrive.ui.onroad.alert_renderer import AlertRenderer
 from openpilot.selfdrive.ui.onroad.driver_state import DriverStateRenderer
 from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
+from openpilot.selfdrive.ui.onroad.debug_renderer import DebugRenderer
 from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
 from openpilot.system.ui.lib.application import gui_app
@@ -48,6 +49,7 @@ class AugmentedRoadView(CameraView):
     self._hud_renderer = HudRenderer()
     self.alert_renderer = AlertRenderer()
     self.driver_state_renderer = DriverStateRenderer()
+    self._debug_renderer = DebugRenderer()
 
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
@@ -88,9 +90,7 @@ class AugmentedRoadView(CameraView):
     self._hud_renderer.render(self._content_rect)
     self.alert_renderer.render(self._content_rect)
     self.driver_state_renderer.render(self._content_rect)
-
-    # Custom UI extension point - add custom overlays here
-    # Use self._content_rect for positioning within camera bounds
+    self._debug_renderer.render(self._content_rect)
 
     # End clipping region
     rl.end_scissor_mode()
