@@ -67,21 +67,36 @@ class DebugRenderer(Widget):
           self._target_t_follow = 1.45
 
 
-    # Compute actual time gap to lead car
+    # Compute follow distances
+    STOP_DISTANCE = 6.0  # meters
     v_ego = sm['carState'].vEgo
+    self._target_dist = (self._target_t_follow * v_ego + STOP_DISTANCE) if v_ego > 0.5 else None
+
+    # Fused distance (radar + vision combined by radard)
     lead = sm['radarState'].leadOne if sm.valid['radarState'] else None
     if lead and lead.status and v_ego > 0.5 and lead.dRel < 100.0:
-      self._actual_gap = lead.dRel / v_ego
+      self._fused_dist = lead.dRel
     else:
-      self._actual_gap = None
+      self._fused_dist = None
 
   def _render(self, rect: rl.Rectangle) -> None:
-    # Build display text
-    target_str = f"{self._target_t_follow:.1f}s"
-    if self._actual_gap is not None:
-      text = f"Follow: {target_str} target | {self._actual_gap:.1f}s actual"
+    # Build display text in feet or meters based on user setting
+    if ui_state.is_metric:
+      unit = "m"
+      conv = 1.0
     else:
-      text = f"Follow: {target_str} target"
+      unit = "ft"
+      conv = 3.28084
+
+    if self._target_dist is not None:
+      target = self._target_dist * conv
+      if self._fused_dist is not None:
+        actual = self._fused_dist * conv
+        text = f"Follow: {target:.0f}{unit} target | {actual:.0f}{unit} actual"
+      else:
+        text = f"Follow: {target:.0f}{unit} target"
+    else:
+      text = "Follow: --"
 
     # Measure text for background pill
     text_size = measure_text_cached(self._font, text, FONT_SIZE)
