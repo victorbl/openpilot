@@ -73,7 +73,7 @@ class LatControlTorque(LatControl):
     if personality != self._cached_personality or self._tuning_frame_counter >= 100:
       self._tuning_frame_counter = 0
       self._cached_personality = personality
-      key = LAT_AGGR_KEYS.get(personality)
+      key = LAT_AGGR_KEYS.get(personality.raw)
       if key:
         try:
           raw = self._tuning_params.get(key, return_default=True)

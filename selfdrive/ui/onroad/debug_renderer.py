@@ -57,7 +57,7 @@ class DebugRenderer(Widget):
     if personality != self._cached_personality or self._param_read_counter >= 60:
       self._param_read_counter = 0
       self._cached_personality = personality
-      key = _FOLLOW_PARAM_KEYS.get(personality)
+      key = _FOLLOW_PARAM_KEYS.get(personality.raw)
       if key:
         try:
           raw = self._params.get(key, return_default=True)
@@ -65,6 +65,7 @@ class DebugRenderer(Widget):
           self._target_t_follow = _follow_scale_to_t_follow(scale)
         except (ValueError, TypeError):
           self._target_t_follow = 1.45
+
 
     # Compute actual time gap to lead car
     v_ego = sm['carState'].vEgo

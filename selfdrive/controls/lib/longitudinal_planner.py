@@ -93,7 +93,7 @@ class LongitudinalPlanner:
     if personality != self._cached_personality or self._tuning_read_counter >= 20:
       self._tuning_read_counter = 0
       self._cached_personality = personality
-      keys = TUNING_PARAM_KEYS.get(personality)
+      keys = TUNING_PARAM_KEYS.get(personality.raw)
       if keys:
         try:
           raw_follow = self._params.get(keys["follow"], return_default=True)
