@@ -26,21 +26,29 @@ All Rivian car support lives in the opendbc submodule:
 
 Rivian uses `pcmCruise=False` with `openpilotLongitudinalControl=True`, matching the standard openpilot paradigm (same as GM, Honda Bosch, VW, Ford). This means:
 
-- **Engagement**: ACC stalk pull triggers a synthetic `decelCruise` button event (carstate.py) which flows through `update_button_enable` -> `buttonEnable` -> openpilot engages. Uses `decelCruise` specifically to avoid `resumeBlocked` NO_ENTRY when vCruise is UNSET.
-- **Disengagement**: ACC stalk cancel generates a `cancel` button event -> `buttonCancel`.
-- **Speed adjustment**: Right/left steering wheel buttons generate `accelCruise`/`decelCruise` events, processed by VCruiseHelper's `_update_v_cruise_non_pcm` (short press +/-1 MPH, long press +/-5 MPH steps).
+- **Engagement**: Left steering wheel button (`RightButton_LeftClick`) toggles openpilot via synthetic `decelCruise` button event → `update_button_enable` → `buttonEnable`. Uses `decelCruise` specifically to avoid `resumeBlocked` NO_ENTRY when vCruise is UNSET. Gated on: Drive gear, stock ACC not active (`ACM_FeatureStatus == 0`), debounce expired.
+- **Disengagement**: Left button again emits `cancel` → `buttonCancel`. Also disengages on brake press.
+- **Speed adjustment**: Scroll wheel rotation generates `accelCruise`/`decelCruise` events via 8-bit direction detection (wrap-around delta), processed by VCruiseHelper's `_update_v_cruise_non_pcm` (+/-1 MPH per scroll step). Gated on `_button_engaged` and `not left_rising` (no speed events on engagement frame).
 - **Speed initialization**: VCruiseHelper sets initial speed to current vehicle speed on engage.
-- **Personality cycling**: Scroll wheel generates `gapAdjustCruise` events.
+- **Personality cycling**: Right button (`RightButton_RightClick`) generates `gapAdjustCruise` events on falling edge.
+- **Stock ACC coexistence**: When openpilot is disengaged, stock ACC via stalk works normally. Buttons are ignored by openpilot — ACM receives them directly via its own bus connection.
 
 ### Button Event Gating
 
-Speed button events (`accelCruise`/`decelCruise`) are only generated when `cruiseState.enabled=True` (stalk pulled). This prevents unintentional `buttonEnable` when buttons are pressed without the stalk, which would cause a panda `controls_allowed` mismatch.
+All openpilot button events are gated on `self._button_engaged` (left button engaged state). Scroll speed events additionally require `not left_rising` to prevent VCruiseHelper resume-path activation on the engagement frame. The engagement toggle itself is gated on `acm_feature_status == 0` (stock ACC not active) and `gearShifter == drive`.
 
-Button state tracking (prev values) is always updated regardless of the gate, so no stale events occur when cruise later engages.
+carstate.py mirrors the panda's 6-frame debounce (~300ms at 20Hz) to prevent panda/Python state mismatch. Brake reset runs BEFORE toggle logic; `cruiseState.enabled` set AFTER both.
 
-### Panda Safety
+### Panda Safety (Dynamic Relay)
 
-The relay blocks `ACM_longitudinalRequest` (0x160) from the stock ACM when in LONG_CONTROL mode. Openpilot sends its own version. The panda's `controls_allowed` is gated by `ACM_FeatureStatus` from the stock ACM — it must report engaged for openpilot to send longitudinal commands.
+Uses Tesla-style `disable_static_blocking` pattern for stock ACC coexistence:
+
+- **0x160** (`ACM_longitudinalRequest`): `disable_static_blocking = true` in RIVIAN_LONG_TX_MSGS. Custom `rivian_fwd_hook` blocks ACM's 0x160 from bus 2→0 ONLY when `controls_allowed` (openpilot engaged). When disengaged, ACM's 0x160 passes through — stock ACC works.
+- **0x162** (`VDM_AdasSts`): Normal static blocking — openpilot always re-creates it. When engaged: overrides `VDM_UserAdasRequest` to IDLE (suppresses stalk). When disengaged: forwards real stalk values.
+- **0x160 from openpilot**: Only sent when `CC.enabled`. ACM is sole source otherwise. No dual 0x160 on bus 0.
+- **controls_allowed**: Gated by left button toggle (rising edge of `RightButton_LeftClick == 2` on 0x131A). NOT gated by `ACM_FeatureStatus` (removed `pcm_cruise_check` in longitudinal mode). Guards: `rivian_in_drive`, `!rivian_acm_engaged`, 6-frame debounce.
+- **Relay malfunction**: Forwarded messages are panda-transmitted on the destination bus → invisible to `stock_ecu_check`. Only real hardware relay failure triggers malfunction.
+- **AEB** (`ACM_AebRequest`, 0x101): Separate CAN address from steering (0x120), NOT in any TX_MSGS list → never blocked by relay. AEB works regardless of openpilot/ACC state.
 
 ### CAN Bus Topology
 
@@ -100,13 +108,15 @@ Reports physical stalk position independent of ACM state:
 - **byte[4]**: Speed buttons. `0x56`=idle, `0x66`=right click (accelCruise), `0x96`=left click (decelCruise). Pulse ~200ms per press.
 - **byte[5]**: Scroll wheel position for follow distance. Steps `0→1→2→3` (4 settings). Stock Rivian ACC uses this for follow gap. Openpilot maps to `gapAdjustCruise`.
 
-Button events mapped in openpilot:
+Button events mapped in openpilot (longitudinal mode — button engagement):
 
-| Signal | Value | Function |
+| Signal | Event | Function |
 |---|---|---|
-| `RightButton_RightClick` (byte[4]=0x66) | `accelCruise` | Increase set speed |
-| `RightButton_LeftClick` (byte[4]=0x96) | `decelCruise` | Decrease set speed |
-| `RightButton_Scroll` (byte[5]) | `gapAdjustCruise` | Cycle driving personality |
+| `RightButton_LeftClick` (byte[4]=0x96) | `decelCruise` / `cancel` | Toggle engage/disengage openpilot |
+| `RightButton_Scroll` (byte[5], 8-bit) | `accelCruise` / `decelCruise` | Adjust set speed (direction via wrap-around delta) |
+| `RightButton_RightClick` (byte[4]=0x66) | `gapAdjustCruise` | Cycle driving personality |
+
+In stock ACC mode (stalk engaged, openpilot off), all buttons are ignored by openpilot — ACM receives them directly via its own bus for stock speed/follow control.
 
 ## CAN Signal Research (from drive 7, route 0406078302)
 
@@ -197,57 +207,36 @@ CAN analysis scripts in `tools/`:
 
 ## Known Limitations
 
-### 20 mph Minimum Engage Speed
+### 20 mph Minimum Engage Speed (stock ACC only)
 
-The Rivian ACM will not report `ACM_FeatureStatus=1` below ~20 mph. Since openpilot engagement depends on `cruiseState.enabled` (which reads `ACM_FeatureStatus`), and the panda gates `controls_allowed` on this signal, openpilot cannot engage below 20 mph.
+The Rivian ACM will not report `ACM_FeatureStatus=1` below ~20 mph. This limits stock ACC engagement to 20+ mph. Openpilot's button engagement bypasses this entirely — left button can engage at any speed in Drive.
 
-### Future Design: Scroll Wheel Engagement (Tesla-style)
+### Button Engagement Architecture (implemented — Tesla-style dynamic relay)
 
-Decouple openpilot from the ACM entirely. Scroll-only engagement, no stock ACC coexistence.
+Two mutually exclusive operating modes with stock ACC coexistence:
 
-**Control scheme**:
+| Mode | 0x160 (accel) | 0x162 (ADAS status) | Buttons | Engagement |
+|------|--------------|---------------------|---------|------------|
+| **Stock ACC** (stalk, OP off) | ACM only (fwd hook allows) | Forwards real stalk values | ACM receives directly via own bus | Left button BLOCKED |
+| **Openpilot** (left button) | OP only (fwd hook blocks ACM) | Suppresses stalk (IDLE) | carstate.py reads panda copy | Stalk suppressed |
 
-| Control | Function |
-|---|---|
-| Scroll click | Toggle engage/disengage openpilot |
-| Scroll wheel rotate | Adjust set speed |
-| Left/right buttons | Cycle personality |
-| Brake / gas pedal | Disengage openpilot |
-| ACC stalk | Ignored by openpilot (stalk-initiated ACC is auto-cancelled) |
+Switching: stock ACC → OP requires stalk-up (cancel) then left button. OP → stock ACC requires left button (disengage) then stalk-down.
 
-**Benefits**: Works at any speed (no 20 mph gate). Tesla-proven UX. Self-contained on right wheel. Eliminates ACM dependency.
+**Stalk & button behavior:**
 
-**CAN signals**: `RightButton_ScrollClick` (2-bit, value 2 = pressed) on `WheelButtons_Fwd` (0x131A, Bus.alt). Currently unused while driving.
+| Scenario | What happens |
+|----------|-------------|
+| OP off, stalk pull | Stock ACC engages. ACM controls car. Buttons control stock ACC speed/follow. |
+| OP off, stalk cancel | Stock ACC disengages. Left button now available. |
+| OP off, stock ACC active, left button | **Ignored** — engagement blocked while ACM active. |
+| OP off, no ACC, left button | **Engage** openpilot. Scroll=speed, right=personality. |
+| OP engaged, stalk pull | **Suppressed** — ACM never sees request via 0x162 IDLE override. |
+| OP engaged, left button | **Disengage** openpilot. ACM's 0x160 unblocked. Stalk resumes. |
+| OP engaged, brake | **Disengage** both panda and carstate. |
 
-**Files to change (2 files)**:
+**Crash recovery:** If openpilot's Python process crashes in longitudinal mode, 0x162 stops being sent to the ACM (static blocking prevents stock 0x162 from reaching it). Stock ACC becomes unavailable until panda heartbeat timeout recovers the relay. AEB is unaffected (separate address 0x101, never blocked).
 
-**`rivian.h` (panda safety)**:
-- Add `WheelButtons_Fwd` (0x131A) on bus 1 to `rivian_rx_checks`
-- Replace `pcm_cruise_check(feature_status == 1)` with scroll click toggle on rising edge
-- Guard: only allow engage when `VDM_Prndl_Status` is Drive (parse from 0x150 on bus 0)
-- Add ~300ms debounce timer to prevent rapid toggling
-- Reset `scroll_engaged` whenever `controls_allowed` is cleared by brake/safety
-- Determine if `WheelButtons_Fwd` is periodic or event-driven — affects rx_checks viability
-
-**`carstate.py`**:
-- Read `RightButton_ScrollClick`, toggle engage (emit `decelCruise pressed=False`) / disengage (emit `cancel pressed=True`)
-- Remap scroll rotate from `gapAdjustCruise` → `accelCruise`/`decelCruise` with direction detection (signed delta with wrap-around: `if delta > 127: delta -= 256`)
-- Remap left/right buttons from `accelCruise`/`decelCruise` → `gapAdjustCruise`
-- Gate speed events on `_scroll_click_engaged` instead of `cruiseState.enabled`
-- Reset `_scroll_click_engaged` on brake/gas disengage
-- Remove all stalk rising/falling edge engagement logic
-
-**Stalk hazard mitigation (Option 1 — auto-cancel)**:
-The relay statically blocks ACM's `ACM_longitudinalRequest` (0x160) in LONG_CONTROL mode. If the user pulls the stalk, the ACM engages but its commands are blocked → VDM System Fault. Fix: when openpilot detects `ACM_FeatureStatus >= 1` (stock ACC/Driver+ trying to engage), immediately send cancel via `VDM_AdasSts` (0x162) to force the ACM to disengage before the VDM faults. The carcontroller already has 0x162 in its TX list.
-
-**Known edge cases to handle during implementation**:
-- Brake press clears panda `controls_allowed` — must also reset `scroll_engaged` in panda and `_scroll_click_engaged` in carstate
-- Scroll direction detection needs wrap-around handling for 0-254 range (255 = idle)
-- Scroll generates many intermediate values per rotation — may need throttling for speed adjustment
-- VCruiseHelper initialization works as-is (decelCruise triggers initialize_v_cruise to current speed)
-- No Rivian cruise UI when openpilot engaged — comma screen is sole source of truth
-
-**Scope**: 2 files (rivian.h + carstate.py) plus stalk auto-cancel in carcontroller. Not implementing now — documenting for future reference.
+**Comparison with Tesla:** We borrowed the `disable_static_blocking` + custom fwd hook mechanism, but use it for mode coexistence (user chooses stock ACC vs openpilot) rather than safety system priority (Tesla yields to AEB/LKAS/Autopark automatically). Tesla's engagement is tied to the stock stalk; ours is fully independent.
 
 ## Settings
 
@@ -275,6 +264,17 @@ tools/op.sh setup        # install dependencies
 source .venv/bin/activate
 scons -u -j8             # build C extensions (required for params_keys.h changes)
 ```
+
+### Safety Tests (panda)
+```bash
+cd openpilot
+source .venv/bin/activate
+cd opendbc_repo
+python -m unittest opendbc.safety.tests.test_rivian -v    # Rivian only (80 tests)
+cd opendbc/safety/tests && ./test.sh                       # All cars + coverage
+```
+
+Safety tests use CFFI to compile rivian.h at import time — no separate build step. Tests cover: button toggle engagement, gear/ACM guards, debounce, brake disengage, dynamic fwd hook (0x160 blocking), static blocking (0x162), rx_check timeout for WheelButtons_Fwd.
 
 ### Replay (testing with recorded drive logs)
 ```bash
