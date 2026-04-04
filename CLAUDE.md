@@ -85,15 +85,115 @@ Reports physical stalk position independent of ACM state:
 | 3 | DOWN_1 | Single push down (ACC engage / drive) |
 | 4 | DOWN_2 | Double push down (Driver+ engage) |
 
-### Steering Wheel Buttons (Bus.alt — park assist)
+### Steering Wheel Buttons (Bus 1 — `WheelButtons_Fwd` 0x131A)
 
-Read from `WheelButtons_Fwd` (0x131A) via harness upgrade:
+7-byte message at 20Hz. Bytes 0-1 are checksum/counter.
 
-| Signal | Value=2 | Function |
+| Byte | Idle | Right Press (+spd) | Left Press (-spd) | Scroll Wheel |
+|------|------|--------------------|--------------------|--------------|
+| [2]  | 0x56 | 0x56               | 0x56               | 0x56         |
+| [3]  | 0x00 | 0x00               | 0x00               | 0x00         |
+| [4]  | 0x56 | **0x66**           | **0x96**           | 0x56         |
+| [5]  | 0x00 | 0x00               | 0x00               | **0-3**      |
+| [6]  | 0x03 | 0x03               | 0x03               | 0x03         |
+
+- **byte[4]**: Speed buttons. `0x56`=idle, `0x66`=right click (accelCruise), `0x96`=left click (decelCruise). Pulse ~200ms per press.
+- **byte[5]**: Scroll wheel position for follow distance. Steps `0→1→2→3` (4 settings). Stock Rivian ACC uses this for follow gap. Openpilot maps to `gapAdjustCruise`.
+
+Button events mapped in openpilot:
+
+| Signal | Value | Function |
 |---|---|---|
-| `RightButton_RightClick` | `accelCruise` | Increase set speed |
-| `RightButton_LeftClick` | `decelCruise` | Decrease set speed |
-| `RightButton_Scroll` | `gapAdjustCruise` | Cycle driving personality |
+| `RightButton_RightClick` (byte[4]=0x66) | `accelCruise` | Increase set speed |
+| `RightButton_LeftClick` (byte[4]=0x96) | `decelCruise` | Decrease set speed |
+| `RightButton_Scroll` (byte[5]) | `gapAdjustCruise` | Cycle driving personality |
+
+## CAN Signal Research (from drive 7, route 0406078302)
+
+Data source: stock ACC drive with openpilot longitudinal disabled. 28 segments, 7 ACC engagement windows totaling 4.3 minutes. User performed deliberate test patterns: 30→35→30 mph speed taps in W1, 20→25 range in W2, follow distance cycling (1→2→3→4→3→2→1) in W3/W6/W7.
+
+### Follow Distance (confirmed on CAN)
+
+Stock Rivian ACC follow distance is controlled by the scroll wheel (`WheelButtons_Fwd` byte[5], 4 settings: 0→1→2→3). When the scroll wheel changes, the ACM echoes the new setting on several CAN messages within ~100ms:
+
+| Bus | Address | Description |
+|-----|---------|-------------|
+| 0/130 | 0x38D | Follow distance response — byte[6] values {145, 153, 157} |
+| 0/130 | 0x38E | Follow distance response — byte[2] values {20, 23, 24} |
+| 0/130 | 0x38F | Follow distance response — byte[4] toggles {20, 24} |
+| 0/130 | 0x550 | Follow distance response |
+| 0/130 | 0x555 | Follow distance response |
+| 0/130 | 0x600 | Follow distance response |
+| 0/130 | 0x427 | Follow distance response |
+
+These messages appear on both Bus 0 (PT) and Bus 130 (forwarded ACM). They respond to scroll events but are completely static during speed button presses — confirming they are follow-distance-only, not set-speed. Exact signal decoding (which byte maps to which of the 4 settings) needs further analysis.
+
+### ACC Set Speed (not found on accessible CAN buses)
+
+Exhaustive analysis of CAN recordings using multiple approaches:
+
+**Methods applied:**
+1. All 520 CAN IDs across buses 0, 1, 2, 128, 129, 130
+2. Byte-aligned (8-bit), 16-bit BE/LE, and arbitrary bit-position extraction (6-12 bits, all offsets)
+3. Exact button press timing from `WheelButtons_Fwd` byte[4] (right press at t=157.4, 160.5, 163.5, 166.4, 168.9; left press at t=172.1, 174.6, 177.0, 179.4, 181.6 — 5 up, 5 down)
+4. Time-series Pearson correlation of every extractable signal vs known set speed staircase
+5. 4-state differential analysis (30 mph before taps, 35 mph after up taps, 30 mph after down taps, 20 mph in W2)
+6. Combined W1 set-speed correlation + W2 vehicle-speed anti-correlation filtering (high W1 corr + low W2 vehicle tracking = set speed)
+7. ISO-TP/multi-frame scan — no genuine ISO-TP found; byte[0] upper nibble matches are false positives from checksum/counter rotation
+8. ACM message analysis on Bus 2: 0x100 (status), 0x101 (static config), 0x110 (accel-related), 0x120 (AEB), 0x160 (longitudinal request) — none carry set speed
+
+**Key finding:** Speed button presses cause NO CAN signal changes on any accessible bus (other than the button event itself and subsequent vehicle dynamics as the car accelerates/decelerates). In contrast, scroll wheel presses for follow distance immediately trigger changes on 6+ ACM messages. This asymmetry confirms the ACM publishes follow distance but not set speed on CAN.
+
+**Result:** No CAN signal holds a stable set speed value during W2 stop-and-go traffic (vehicle at 10-18 mph, set speed at 20-25 mph). Every candidate with high W1 correlation tracks vehicle speed, not set speed. The ACM processes speed taps internally and outputs only acceleration commands (0x160/0x390).
+
+**Community validation:** Sunnypilot (lukasloetkolben, who reverse-engineered the original Rivian DBC for openpilot) also has `# TODO: find cruise set speed on CAN` and manages set speed entirely in software from button events via `carstate_ext.py`.
+
+**How other cars do it:** Most OEMs (Toyota, Honda, Hyundai, GM, VW, Ford, Subaru) publish ACC set speed as an 8-bit signal in kph on CAN, typically from the cruise control module to the cluster. The Rivian ACM does not follow this pattern on the buses accessible through the comma four harness.
+
+### Why Set Speed May Not Be On Accessible CAN
+
+**Rivian network architecture:**
+- Zonal architecture with 7 ECUs connected via Ethernet backbone at 2 Gbps (TE MATEnet connectors)
+- Replaced 1.6 miles of wiring with Ethernet; CAN retained for legacy/low-bandwidth domains
+- OBD2 port has NO CAN lines — uses 4 Ethernet pins (DoIP / Diagnostics over IP)
+- Diagnostic access requires RiDE tool ($5,500/year), proprietary authentication
+
+**Comma four harness access:**
+- Taps 3 CAN domains via ADAS camera connector at windshield: Bus 0 (PT), Bus 1 (ADAS), Bus 2 (CAM/ACM)
+- xnor harness upgrade adds park assist bus (forwarded on Bus 1) via AXM module in passenger footwell
+- Additional CAN domains (body, infotainment, cluster) may exist but are not accessible through the comma harness
+
+**Most likely explanations (not yet confirmed):**
+1. Set speed transmitted to cluster via vehicle Ethernet (not CAN)
+2. Set speed on a CAN bus we don't tap (body/infotainment domain feeding the cluster)
+3. ACM manages set speed purely internally, sends only acceleration commands on CAN
+
+**Our approach:** Software-managed via VCruiseHelper (same as sunnypilot). Button presses generate `accelCruise`/`decelCruise` events which VCruiseHelper processes with `_update_v_cruise_non_pcm`.
+
+**Next steps to find set speed:**
+- Probe cluster connector physically with USB CAN adapter to identify what bus feeds it
+- UDS `ReadDataByIdentifier` (0x22) request to ACM for set speed DID while ACC is active
+- Contact lukasloetkolben to ask if he investigated and ruled out other buses
+- New recording with maximum divergence: set 60 mph behind stopped car, so set speed stays 60 while vehicle goes to 0
+
+### Vehicle Speed Signals
+
+| Bus | Address | Signal | Notes |
+|-----|---------|--------|-------|
+| 0 | 0x208 (ESP_Status) | `ESP_Vehicle_Speed` | 16-bit at bits 55\|16@0+ (Motorola), 0.01 kph scaling. Primary speed source used in carstate.py. |
+| 0 | 0x38B | byte[2] | Tracks vehicle speed closely. During clear-road ACC (W1), shows clean staircase matching set speed taps — but this is the vehicle FOLLOWING set speed, not the set speed itself. Confirmed by W2: bounces with traffic (10-21) while set speed should be stable at 20-25. |
+| 1 | 0x4F1 (Cluster) | `Cluster_VehicleSpeed` | 8-bit, 1 mph or kph depending on `Cluster_Unit`. Display speed used for `vEgoCluster`. |
+
+### Analysis Tools
+
+CAN analysis scripts in `tools/`:
+- `can_signal_finder.py` — General stepping signal finder
+- `can_bidir_finder.py` — Bidirectional stepping pattern finder
+- `can_setspeed_finder.py` — Targeted set speed search with plateau detection
+- `can_setspeed_v2.py` — 1Hz downsampled stability analysis
+- `can_acc_windows.py` — ACC engagement window detection + per-window signal analysis
+- `can_follow_dist.py` — Follow distance + set speed combined search
+- `can_window_dump.py` — Multi-signal raw dump per ACC window
 
 ## Known Limitations
 
@@ -174,6 +274,45 @@ python3 selfdrive/ui/ui.py           # comma 4 layout (small screen / mici)
 tools/op.sh setup        # install dependencies
 source .venv/bin/activate
 scons -u -j8             # build C extensions (required for params_keys.h changes)
+```
+
+### Replay (testing with recorded drive logs)
+```bash
+cd openpilot
+source .venv/bin/activate
+
+# Replay a route from local rlog files
+tools/replay/replay --data-dir /path/to/realdata "route_id"
+
+# Replay from comma connect (requires login)
+tools/replay/replay "route_id"
+```
+
+While replay is running, launch the UI in a separate terminal to see the driving screen:
+```bash
+source .venv/bin/activate
+python3 selfdrive/ui/ui.py           # or BIG=1 for comma 3X layout
+```
+
+Drive recordings are stored at: `/Users/victorblanco/Library/Mobile Documents/com~apple~CloudDocs/Storage/Projects/Rivian/Comma Video/`
+
+Route naming: `BOOTNUMBER--ROUTEID--SEGMENT` (e.g., `00000007--0406078302--0`)
+
+### CAN Analysis
+```bash
+source .venv/bin/activate
+
+# Signal finder (general stepping patterns)
+python3 tools/can_signal_finder.py "/path/to/Comma Video" route_filter
+
+# ACC-windowed analysis (detects ACC engagement, analyzes within windows)
+python3 tools/can_acc_windows.py "/path/to/Comma Video" 0406078302
+
+# Follow distance + set speed combined search
+python3 tools/can_follow_dist.py "/path/to/Comma Video" 0406078302
+
+# Raw signal dump per ACC window
+python3 tools/can_window_dump.py "/path/to/Comma Video" 0406078302
 ```
 
 ### Full simulator (MetaDrive)
