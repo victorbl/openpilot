@@ -170,11 +170,32 @@ Exhaustive analysis of CAN recordings using multiple approaches:
 
 **Our approach:** Software-managed via VCruiseHelper (same as sunnypilot). Button presses generate `accelCruise`/`decelCruise` events which VCruiseHelper processes with `_update_v_cruise_non_pcm`.
 
-**Next steps to find set speed:**
+**UDS DID scan (2026-04-05):**
+
+Scanned all ECUs accessible via UDS `ReadDataByIdentifier` (0x22) while stock ACC was active at two different set speeds (21 mph and 24 mph, both with vehicle stopped at 0 mph behind a parked car). Used direct panda access in `alloutput+passthrough` mode with openpilot stopped.
+
+ECUs discovered on bus 0 (via TesterPresent, rx_offset=0x40):
+| TX | RX | Identity |
+|----|-----|----------|
+| 0x71B | 0x75B | Unknown ECU |
+| 0x732 | 0x772 | Unknown ECU |
+| 0x733 | 0x773 | EPAS (known) |
+| 0x734 | 0x774 | Unknown ECU |
+| 0x735 | 0x775 | Unknown ECU |
+| 0x736 | 0x776 | Unknown ECU |
+
+No ECUs responded on bus 2 (ACM bus) in the direct-panda scan, despite responding in an earlier cereal-based scan. The alloutput safety mode may handle bus 2 differently, or the ACM requires the Rivian safety mode's forwarding to be active for UDS responses to route correctly.
+
+52 DIDs responded per pass across 6 ECUs. All are static firmware/config values (0xF1xx identifiers: software versions, serial numbers, boot IDs, checksums). **Zero values changed between the 21 mph and 24 mph set speed sessions.** ~20 additional DIDs returned MULTI-FRAME responses (not captured — would need full ISO-TP implementation).
+
+**Conclusion:** Set speed is not exposed via UDS ReadDataByIdentifier on bus 0 ECUs. The ACM on bus 2 (the only ECU that manages set speed) did not respond to UDS queries in this configuration. This further confirms the ACM manages set speed purely internally.
+
+**Remaining unexplored paths:**
 - Probe cluster connector physically with USB CAN adapter to identify what bus feeds it
-- UDS `ReadDataByIdentifier` (0x22) request to ACM for set speed DID while ACC is active
+- Query ACM on bus 2 with Rivian safety mode active (requires cross-compiled pandad with UDS TX whitelist)
 - Contact lukasloetkolben to ask if he investigated and ruled out other buses
-- New recording with maximum divergence: set 60 mph behind stopped car, so set speed stays 60 while vehicle goes to 0
+- UDS in EXTENDED_DIAGNOSTIC session (0x10 0x03) — some ECUs only expose runtime DIDs in extended mode
+- Full ISO-TP multi-frame capture for the ~20 MULTI-FRAME DIDs that were detected but not read
 
 ### Vehicle Speed Signals
 
